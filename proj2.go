@@ -144,11 +144,11 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	datastore_key, encyption_key := generate_user_key(username, password)
 	userlib.KeystoreSet(username, signed_key.PublicKey)
 
-
 	userdata.Username = username
 	userdata.dataStoreKey = datastore_key
-	userdata.signedKey = signed_key.PublicKey
 	userdata.encryptionKey = encyption_key
+	userdata.signedKey = signed_key.PublicKey
+	
 
 
 	user_json, _ = json.Marshal(userdata)
