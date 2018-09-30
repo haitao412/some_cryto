@@ -108,10 +108,20 @@ func generate_user_key(username string, password string) ([]byte, []byte) {
 	return datastore_key, encyption_key
 }
 
+/*
+Encrypt data with CFB block method
+append iv as first of cipher text since it 
+is not secret, just need to be random
+*/
 
 func encrypt_data(key []byte, data []byte) ([] byte) {
 
-	
+	ciphertext := make([]byte, userlib.BlockSize + len(data))
+	iv := ciphertext[:userlib.BlockSize]
+	copy(iv, randomBytes(userlib.BlockSize))
+	mode := userlib.CFBEncrypter(key, iv)
+	mode.XORKeyStream(ciphertext[aes.BlockSize:], data)
+	return ciphertext
 }
 
 
@@ -139,6 +149,8 @@ func encrypt_data(key []byte, data []byte) ([] byte) {
 
 // You can assume the user has a STRONG password
 func InitUser(username string, password string) (userdataptr *User, err error) {
+
+	
 	var userdata User
 	signed_key, _ := userlib.GenerateRSAKey()
 	datastore_key, encyption_key := generate_user_key(username, password)
@@ -153,12 +165,12 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 
 	user_json, _ = json.Marshal(userdata)
 	encypted_user_data = EncryptData(encyption_key, user_json)
+	signed_encypted_user_data = userlib.RSASign(signed_key, encypted_user_data)
+	encypted_user_data_and_signature = [2][]byte{encypted_user_data, signed_encypted_user_data}
+	encypted_user_data_and_signature_json, _ = json.Marshal(encypted_user_data_and_signature)
+	userlib.KeystoreSet(string(datastore_key), encypted_user_data_and_signature_json)
 
     
-
-
-
-
 	return &userdata, err
 }
 
