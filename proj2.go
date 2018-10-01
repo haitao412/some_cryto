@@ -150,7 +150,7 @@ func encrypt_data(key []byte, data []byte) ([] byte) {
 // You can assume the user has a STRONG password
 func InitUser(username string, password string) (userdataptr *User, err error) {
 
-	
+
 	var userdata User
 	signed_key, _ := userlib.GenerateRSAKey()
 	datastore_key, encyption_key := generate_user_key(username, password)
@@ -159,7 +159,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 
 	userdata.Username = username
 	userdata.dataStoreKey = datastore_key
-	userdata.signedKey = signed_key.PublicKey
+	userdata.signedKey = signed_key
 	userdata.encryptionKey = encyption_key
 
 
@@ -168,7 +168,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	signed_encypted_user_data = userlib.RSASign(signed_key, encypted_user_data)
 	encypted_user_data_and_signature = [2][]byte{encypted_user_data, signed_encypted_user_data}
 	encypted_user_data_and_signature_json, _ = json.Marshal(encypted_user_data_and_signature)
-	userlib.KeystoreSet(string(datastore_key), encypted_user_data_and_signature_json)
+	userlib.DatastoreSet(string(datastore_key), encypted_user_data_and_signature_json)
 
     
 	return &userdata, err
@@ -178,6 +178,9 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 // fail with an error if the user/password is invalid, or if the user
 // data was corrupted, or if the user can't be found.
 func GetUser(username string, password string) (userdataptr *User, err error) {
+
+
+
 	return
 }
 
