@@ -164,6 +164,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 
 	user_json, _ = json.Marshal(userdata)
 	encypted_user_data = encrypt_data(encyption_key, user_json)
+
 	signed_encypted_user_data = userlib.RSASign(signed_key, encypted_user_data)
 	encypted_user_data_and_signature = [2][]byte{encypted_user_data, signed_encypted_user_data}
 	encypted_user_data_and_signature_json, _ = json.Marshal(encypted_user_data_and_signature)
@@ -177,6 +178,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 // fail with an error if the user/password is invalid, or if the user
 // data was corrupted, or if the user can't be found.
 func GetUser(username string, password string) (userdataptr *User, err error) {
+
 	var userdata User
 	datastore_key, encyption_key = generate_user_key(username, password)
 	publicKey = userlib.KeystoreGet(username)
@@ -198,6 +200,7 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 		return err
 	}
 	return &userdata, err
+
 }
 
 // This stores a file in the datastore.
