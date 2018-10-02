@@ -108,10 +108,20 @@ func generate_user_key(username string, password string) ([]byte, []byte) {
 	return datastore_key, encyption_key
 }
 
+/*
+Encrypt data with CFB block method
+append iv as first of cipher text since it 
+is not secret, just need to be random
+*/
 
 func encrypt_data(key []byte, data []byte) ([] byte) {
 
-	
+	ciphertext := make([]byte, userlib.BlockSize + len(data))
+	iv := ciphertext[:userlib.BlockSize]
+	copy(iv, randomBytes(userlib.BlockSize))
+	mode := userlib.CFBEncrypter(key, iv)
+	mode.XORKeyStream(ciphertext[aes.BlockSize:], data)
+	return ciphertext
 }
 
 
@@ -139,26 +149,27 @@ func encrypt_data(key []byte, data []byte) ([] byte) {
 
 // You can assume the user has a STRONG password
 func InitUser(username string, password string) (userdataptr *User, err error) {
+
+
 	var userdata User
 	signed_key, _ := userlib.GenerateRSAKey()
 	datastore_key, encyption_key := generate_user_key(username, password)
 	userlib.KeystoreSet(username, signed_key.PublicKey)
 
+
 	userdata.Username = username
 	userdata.dataStoreKey = datastore_key
+	userdata.signedKey = signed_key
 	userdata.encryptionKey = encyption_key
-	userdata.signedKey = signed_key.PublicKey
-	
-
 
 	user_json, _ = json.Marshal(userdata)
-	encypted_user_data = EncryptData(encyption_key, user_json)
+	encypted_user_data = encrypt_data(encyption_key, user_json)
+	signed_encypted_user_data = userlib.RSASign(signed_key, encypted_user_data)
+	encypted_user_data_and_signature = [2][]byte{encypted_user_data, signed_encypted_user_data}
+	encypted_user_data_and_signature_json, _ = json.Marshal(encypted_user_data_and_signature)
+	userlib.DatastoreSet(string(datastore_key), encypted_user_data_and_signature_json)
 
     
-
-
-
-
 	return &userdata, err
 }
 
@@ -166,7 +177,27 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 // fail with an error if the user/password is invalid, or if the user
 // data was corrupted, or if the user can't be found.
 func GetUser(username string, password string) (userdataptr *User, err error) {
-	return
+	var userdata User
+	datastore_key, encyption_key = generate_user_key(username, password)
+	publicKey = userlib.KeystoreGet(username)
+	receiveFile = DatastoreGet(datastore_key)
+	var encypted_user_data_and_signature [2][]byte
+	err := json.Unmashaled(receiveFile, &encypted_user_data_and_signature)
+	if err != nil {
+		return err
+	}
+	encypted_user_data = encypted_user_data_and_signature[0] 
+	signed_encypted_user_data = encypted_user_data_and_signature[1]
+	err := userlib.RSAVerify(publicKey, encypted_user_data, encypted_user_data_and_signature)
+	if err != nil {
+		return err
+	}
+	user_json = decrypt_data(encyption_key, encypted_user_data)
+	err := json.Unmashaled(user_json, userdata) 
+	if err != nil {
+		return err
+	}
+	return &userdata, err
 }
 
 // This stores a file in the datastore.
