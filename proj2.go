@@ -104,6 +104,7 @@ type FileKey struct {
     encyption_key []byte
     mac_key       []byte
     file_begin    string
+    is_owner      bool
 }
 
 /*
@@ -277,9 +278,10 @@ func generate_hmac_key_for_file(file_name string, random_string string) []byte {
 }
 
 
-func SplitAndStoreFile(data []byte, int node_size, encryption_key []byte, mac_key []byte) (num_of_node int,node_id string) {
+func SplitAndStoreFile(data []byte, node_size int, encryption_key []byte, mac_key []byte) (num_of_node int,node_id string) {
 
     new_data := make([]byte, len(data))
+    copy(new_data, data)
     length := len(data)
     node_id := uuid.New().String()
     num_of_node := 0
@@ -316,9 +318,52 @@ func SplitAndStoreFile(data []byte, int node_size, encryption_key []byte, mac_ke
 
 }
 
+func get_file_node(filekey *FileKey) (file_begin *FileBeginNode, data []*FileNode, err error) {
 
+    file_begin_node_json, err := DatastoreDecrytGet(filekey.encyption_key, filekey.mac_key, filekey.file_begin)
 
+    if err != nil {
+        return nil, nil, errors.New(strings.ToTitle("file not found !!!"))
+    }
 
+    err1 := json.Unmarshal(file_begin_node_json, &file_begin)
+
+    if err1 != nil {
+
+        return nil, nil, errors.New(strings.ToTitle("Json file corrupted !!!"))
+    }
+
+    data = make([]*FileNode, file_begin.node_nums)
+    node_data_json, err2 := DatastoreDecrytGet(filekey.encyption_key, filekey.mac_key, file_begin.start_node)
+
+    if err2 != nil {
+        return nil, nil, errors.New(strings.ToTitle("file not found !!!"))
+    }
+
+    for i:= 0; i < file_begin.num_of_node; i++ {
+        var node_data FileNode
+
+        err3 := json.Unmarshal(node_data_json, &node_data)
+
+        if err3 != nil {
+            return nil, nil, errors.New(strings.ToTitle("Json file corrupted !!!"))
+        }
+
+        if node_data.content == nil {
+            break
+        }
+        data[i] = &node_data
+
+        node_data_json, err4 := DatastoreDecrytGet(filekey.encyption_key, filekey.mac_key, node_data.next_node)
+
+        if err4 != nil {
+            return nil, nil, errors.New(strings.ToTitle("Json file corrupted !!!"))
+        }
+
+    }
+
+    return file_begin, data, err
+}
 
 /***************************************************************
                 END HELPER FUNCTION IN THIS AREA
@@ -432,7 +477,7 @@ func (userdata *User) StoreFile(filename string, data []byte) {
 
     var file_info FileBeginNode
     file_info.file_length = len(data)
-    num_of_nodes, start_node := SplitAndStoreFile(data, node_size, file_key.encryption_key, file_key.mac_key)
+    num_of_nodes, start_node := SplitAndStoreFile(data, userlib.AESKeySize * 5, file_key.encryption_key, file_key.mac_key)
     file_info.num_of_nodes = num_of_nodes
     file_info.start_node = start_node
 
@@ -448,8 +493,6 @@ func (userdata *User) StoreFile(filename string, data []byte) {
     DatastoreEncryptSet(userdata.encryptionKey, userdata.macKey, file_list_json, userdata.fileListId)
 
     return nil
-
-
 }
 
 // This adds on to an existing file.
@@ -459,19 +502,73 @@ func (userdata *User) StoreFile(filename string, data []byte) {
 // metadata you need.
 
 func (userdata *User) AppendFile(filename string, data []byte) (err error) {
-    return
+
+    file_list, err := GetFileList(userdata.encryptionKey, userdata.macKey, userdata.fileListId)
+
+    if err != nil {
+        return nil, err
+    }
+
+    var file_key FileKey 
+    &file_key, exist := file_list[filename]
+
+    if !exist {
+        return nil, errors.New(strings.ToTitle("This file does not exist"))
+    }
+
+    file_begin, files ,err := get_file_node(file_key)
+
+    last_node = files[len(files) - 1]
+    last_node.append(data)
+
+    num_of_nodes, last_node_id := SplitAndStoreFile(last_node, userlib.AESKeySize * 5, userdata.encryptionKey, userdata.macKey)
+    file_begin.file_length = len(files)
+    file_begin.num_of_node += (num_of_nodes - 1)
+    file_begin.next_node = last_node_id
+
+    file_begin_node_json, _ := json.Marshal(file_begin)
+    DatastoreEncryptSet(file_key.encryption_key, file_key.mac_key, file_begin_node_json, file_key.file_begin)
+
+    return err
 }
 
 // This loads a file from the Datastore.
 //
 // It should give an error if the file is corrupted in any way.
 func (userdata *User) LoadFile(filename string) (data []byte, err error) {
-    return
+
+    file_list, err := GetFileList(userdata.encryptionKey, userdata.macKey, userdata.fileListId)
+
+    if err != nil {
+        return nil, err
+    }
+
+    var file_key FileKey 
+    &file_key, exist := file_list[filename]
+
+    if !exist {
+        return nil, errors.New(strings.ToTitle("This file does not exist"))
+    }
+
+    file_begin, files ,err := get_file_node(file_key)
+
+    if err != nil {
+        return nil, nil, err
+    }
+
+    for i:=0; i < len(files); i++ {
+        data.append(files[i])
+    }
+
+    return data, err
 }
 
 // You may want to define what you actually want to pass as a
 // sharingRecord to serialized/deserialize in the data store.
 type sharingRecord struct {
+
+    Signature      []byte
+    encrypted_file []byte
 }
 
 // This creates a sharing record, which is a key pointing to something
@@ -487,7 +584,43 @@ type sharingRecord struct {
 
 func (userdata *User) ShareFile(filename string, recipient string) (
     msgid string, err error) {
-    return
+
+    public_key_recipient, err := userlib.KeystoreGet(recipient) 
+
+    if err != nil {
+        return nil, errors.New(strings.ToTitle("This recipient does not exist"))
+    }
+
+    file_list, err := GetFileList(userdata.encryptionKey, userdata.macKey, userdata.fileListId)
+
+    if err != nil {
+        return nil, err
+    }
+
+    var file_key FileKey 
+    &file_key, exist := file_list[filename]
+
+    if !exist {
+        return nil, errors.New(strings.ToTitle("This file does not exist"))
+    }
+
+    var a_file_key FileKey
+    file_key_recipient = &a_file_key
+    file_key_recipient.encyption_key = file_key.encyption_key
+    file_key_recipient.mac_key = file_key.mac_key
+    file_key_recipient.file_begin = file_key.file_begin
+    file_key_recipient.is_owner = false
+    file_key_recipient_json, _ := json.Marshal(file_key_recipient)
+    recipient_sharing_id := uuid.New().String()
+    file_key_recipient_json_encrypted, err := userlib.RSAEncrypt(&public_key_recipient,
+                            file_key_recipient_json, []bytes(userdata.username))
+
+    signature, err := userlib.RSASign(userdata.signedKey, file_key_recipient_json_encrypted)
+    shared_record := sharingRecord{Signature:signature, encrypted_file:file_key_recipient_json_encrypted}
+    shared_record_json, _ := json.Marshal(shared_record)
+    userlib.DatastoreSet(recipient_sharing_id, shared_record_json)
+
+    return recipient_sharing_id, err
 }
 
 // Note recipient's filename can be different from the sender's filename.
@@ -496,10 +629,61 @@ func (userdata *User) ShareFile(filename string, recipient string) (
 // it is authentically from the sender.
 func (userdata *User) ReceiveFile(filename string, sender string,
     msgid string) error {
-    return nil
+
+    sender_public_key, valid := userlib.KeystoreGet(sender)
+
+    if valid != nil {
+        return errors.New(strings.ToTitle("This file does not exist"))
+    }
+
+    shared_record_json, valid := userlib.DatastoreGet(msgid)
+
+    if valid != nil {
+        return errors.New(strings.ToTitle("shared record does not exist"))
+    }
+
+    var shared_record sharingRecord
+    err := json.Unmarshal(shared_record_json, &shared_record)
+
+    if err != nil {
+        return errors.New(strings.ToTitle("Json file is tampered !!!"))
+    }
+
+    err := userlib.RSAVerify(&sender_public_key, file_key_recipient.encrypted_file,
+        file_key_recipient.Signature)
+
+    if err != nil {
+        return errors.New(strings.ToTitle("RSA Verify fails!!!"))
+    }
+
+    file_key_recipient_json, err := userlib.RSADecrypt(userdata.signedKey, 
+                                    shared_record.encrypted_file, []byte(sender))
+    var file_key_recipient FileKey
+
+    err := json.Unmarshal(file_key_recipient_json, &file_key_recipient)
+
+    if err != nil {
+        errors.New(strings.ToTitle("Integrity Error!"))
+    } 
+
+
+    file_list_of_receiver, err := GetFileList(userdata.encryptionKey, userdata.macKey, userdata.fileListId)
+
+    if err != nil {
+        return err
+    }
+
+    file_list_of_receiver[filename] = &file_key_recipient
+    file_list_of_receiver_json , _ := json.Marshal(file_list_of_receiver)
+
+    DatastoreEncryptSet(userdata.encryptionKey, userdata.macKey, file_list_of_receiver_json, userdata.fileListId)
+
+    return err
 }
 
 // Removes access for all others.
 func (userdata *User) RevokeFile(filename string) (err error) {
+
+
     return
 }
