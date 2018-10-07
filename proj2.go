@@ -26,7 +26,7 @@ import (
     // Useful for debug messages, or string manipulation for datastore keys
     "strings"
 
-    "crypto/aes"
+    _"crypto/aes"
     "crypto/rsa"
     // Want to import errors
     "errors"
@@ -35,7 +35,7 @@ import (
 // This serves two purposes: It shows you some useful primitives and
 // it suppresses warnings for items not being imported
 func someUsefulThings() {
-    // Creates a random UUID
+    //Creates a random UUID
     f := uuid.New()
     userlib.DebugMsg("UUID as string:%v", f.String())
 
@@ -63,6 +63,8 @@ func someUsefulThings() {
     var key *userlib.PrivateKey
     key, _ = userlib.GenerateRSAKey()
     userlib.DebugMsg("Key is %v", key)
+
+    //userlib.DebugMsg("datastore is %v", userlib.datastore)
 }
 
 // Helper function: Takes the first 16 bytes and
@@ -84,11 +86,11 @@ type User struct {
      fileContent:     the content of file we want to store
     */
     Username      string
-    dataStoreKey  []byte 
-    encryptionKey []byte 
-    macKey        []byte
-    signedKey     *rsa.PrivateKey
-    fileListId    string
+    DataStoreKey  []byte 
+    EncryptionKey []byte 
+    MacKey        []byte
+    SignedKey     *rsa.PrivateKey
+    FileListId    string
 }
 
 
@@ -103,10 +105,10 @@ file_begin:     to get the FileBeginNode of this file
 */
 type FileKey struct {
 
-    encyption_key []byte
-    mac_key       []byte
-    file_begin    string
-    is_owner      bool
+    Encyption_key []byte
+    Mac_key       []byte
+    File_begin    string
+    Is_owner      bool
 }
 
 /*
@@ -120,10 +122,10 @@ end_node:      track the very node of the file.
 */
 type  FileBeginNode struct {
      
-     file_length int 
-     node_nums   int 
-     start_node  string
-     end_node string
+     File_length int 
+     Node_nums   int 
+     Start_node  string
+     End_node string
 }
 
 /*
@@ -134,8 +136,8 @@ next_node:  to get the next FileNode in DataStore
 */
 type  FileNode struct {
 
-    content   []byte
-    next_node  string
+    Content   []byte
+    Next_node  string
 }
 
 /***************************************************************
@@ -147,10 +149,9 @@ Generate a pair key include
 a key to store userdata in datastore and 
 a key to encrypt userdate
 */
-
 func generate_user_key(username string, password string) ([]byte, []byte) {
-    encyption_key := userlib.Argon2Key([]byte(password), []byte(username), uint32(userlib.AESKeySize))
-    datastore_key := userlib.Argon2Key([]byte(encyption_key), []byte(password), uint32(len(username)))
+    encyption_key := userlib.Argon2Key([]byte(password), []byte(username), uint32(userlib.BlockSize))
+    datastore_key := userlib.Argon2Key([]byte(username), []byte(password), uint32(len(username)))
     
     return datastore_key, encyption_key
 }
@@ -176,7 +177,7 @@ func encrypt_data(key []byte, data []byte) ([] byte) {
     iv := ciphertext[:userlib.BlockSize]
     copy(iv, userlib.RandomBytes(userlib.BlockSize))
     mode := userlib.CFBEncrypter(key, iv)
-    mode.XORKeyStream(ciphertext[aes.BlockSize:], data)
+    mode.XORKeyStream(ciphertext[userlib.BlockSize:], data)
     return ciphertext
 }
 
@@ -186,15 +187,18 @@ append iv as first of cipher text since it
 is not secret, just need to be random
 */
 
-func decrypt_data(key []byte, data []byte) ([] byte){
+func decrypt_data(key []byte, data []byte) ([]byte){
 
     block := userlib.CFBDecrypter(key, data[:userlib.BlockSize])
     block.XORKeyStream(data[userlib.BlockSize:], data[userlib.BlockSize:])
-    return data[userlib.BlockSize:]
+
+    result := make([]byte, len(data[userlib.AESKeySize:]))
+    copy(result, data[userlib.AESKeySize:])
+    return result
 }
 
 
-func DatastoreDecrytGet(encyption_key []byte, mac_key []byte, id string) (json []byte, err error){
+func DatastoreDecrytGet(encyption_key []byte, mac_key []byte, id string) ([]byte, error){
     var ciphertext []byte
     var valid bool
     ciphertext, valid = userlib.DatastoreGet(id)
@@ -202,7 +206,7 @@ func DatastoreDecrytGet(encyption_key []byte, mac_key []byte, id string) (json [
         return nil, errors.New(strings.ToTitle("Can not get from Datastore !!!"))
     }
 
-    json, err = decrypt_and_demac(encyption_key, mac_key, ciphertext)
+    json, err := decrypt_and_demac(encyption_key, mac_key, ciphertext)
     if err != nil {
         return nil, err
     }
@@ -214,6 +218,7 @@ func DatastoreDecrytGet(encyption_key []byte, mac_key []byte, id string) (json [
 func GetFileList(encyption_key []byte, mac_key []byte, id string) (filelist map[string]FileKey, err error) {
 
     json_file_list, err1 := DatastoreDecrytGet(encyption_key, mac_key, id)
+    userlib.DebugMsg("file_list_json %v", json_file_list)
 
     if err1 != nil {
         return nil, err1
@@ -237,8 +242,8 @@ func encypt_and_mac(encyption_key []byte, mac_key []byte, data []byte) ([]byte){
     var mac []byte
     ciphertext := encrypt_data(encyption_key, data)
     mac = generate_hmac(mac_key, data)
-    ciphertext = append(ciphertext, mac...)
-    return ciphertext
+    aes_ciphertext := append(ciphertext, mac...)
+    return aes_ciphertext
 }
 
 func DatastoreEncryptSet(encyption_key []byte, mac_key []byte, json []byte, id string) {
@@ -257,7 +262,7 @@ func decrypt_and_demac(encyption_key []byte, mac_key []byte, ciphertext []byte) 
 
         return nil, errors.New(strings.ToTitle("Cipthertext is temperd !!!"))
     }
-
+   
     return decrypt_data(encyption_key, encypted_data), nil
 }
 
@@ -269,12 +274,12 @@ func generate_hmac(mac_key []byte, data []byte) []byte {
     return expectedMAC
 }
 
-func generate_encryption_key_for_file(file_name string, random_string string) []byte {
+func generate_encryption_key_for_file(file_name string, random_string string) ([]byte) {
 
     return userlib.Argon2Key([]byte(random_string), []byte(file_name), uint32(userlib.AESKeySize))
 }
 
-func generate_hmac_key_for_file(file_name string, random_string string) []byte {
+func generate_hmac_key_for_file(file_name string, random_string string) ([]byte) {
 
     return userlib.Argon2Key([]byte(random_string), []byte(file_name), uint32(userlib.AESKeySize))
 }
@@ -292,22 +297,22 @@ func SplitAndStoreFile(data []byte, node_size int, encryption_key []byte, mac_ke
     if length < node_size {
 
         num_of_node = 1
-        thisNode.content = new_data
-        thisNode.next_node = uuid.New().String()
+        thisNode.Content = new_data
+        thisNode.Next_node = uuid.New().String()
 
         var terminal_node FileNode
-        terminal_node.content = nil
+        terminal_node.Content = nil
 
         terminal_node_json, _ := json.Marshal(terminal_node)
-        DatastoreEncryptSet(encryption_key, mac_key, terminal_node_json, thisNode.next_node)
+        DatastoreEncryptSet(encryption_key, mac_key, terminal_node_json, thisNode.Next_node)
 
         thisNode_json, _ := json.Marshal(thisNode)
         DatastoreEncryptSet(encryption_key, mac_key, thisNode_json, node_id)
 
     } else {
         var thisNode_json []byte
-        thisNode.content = new_data[:node_size]
-        num_of_node, thisNode.next_node = SplitAndStoreFile(new_data[node_size:], node_size, encryption_key, mac_key)
+        thisNode.Content = new_data[:node_size]
+        num_of_node, thisNode.Next_node = SplitAndStoreFile(new_data[node_size:], node_size, encryption_key, mac_key)
         thisNode_json, _ = json.Marshal(thisNode)
         DatastoreEncryptSet(encryption_key, mac_key, thisNode_json, node_id)
         num_of_node = num_of_node + 1
@@ -321,7 +326,7 @@ func SplitAndStoreFile(data []byte, node_size int, encryption_key []byte, mac_ke
 
 func get_file_node(filekey *FileKey) (file_begin *FileBeginNode, data []*FileNode, err error) {
 
-    file_begin_node_json, err := DatastoreDecrytGet(filekey.encyption_key, filekey.mac_key, filekey.file_begin)
+    file_begin_node_json, err := DatastoreDecrytGet(filekey.Encyption_key, filekey.Mac_key, filekey.File_begin)
 
     if err != nil {
         return nil, nil, errors.New(strings.ToTitle("file not found !!!"))
@@ -334,14 +339,14 @@ func get_file_node(filekey *FileKey) (file_begin *FileBeginNode, data []*FileNod
         return nil, nil, errors.New(strings.ToTitle("Json file corrupted !!!"))
     }
 
-    data = make([]*FileNode, file_begin.node_nums)
-    node_data_json, err2 := DatastoreDecrytGet(filekey.encyption_key, filekey.mac_key, file_begin.start_node)
+    data = make([]*FileNode, file_begin.Node_nums)
+    node_data_json, err2 := DatastoreDecrytGet(filekey.Encyption_key, filekey.Mac_key, file_begin.Start_node)
 
     if err2 != nil {
         return nil, nil, errors.New(strings.ToTitle("file not found !!!"))
     }
 
-    for i:= 0; i < file_begin.node_nums; i++ {
+    for i:= 0; i < file_begin.Node_nums; i++ {
         var node_data FileNode
 
         err3 := json.Unmarshal(node_data_json, &node_data)
@@ -350,12 +355,12 @@ func get_file_node(filekey *FileKey) (file_begin *FileBeginNode, data []*FileNod
             return nil, nil, errors.New(strings.ToTitle("Json file corrupted !!!"))
         }
 
-        if node_data.content == nil {
+        if node_data.Content == nil {
             break
         }
         data[i] = &node_data
 
-        node_data_json, err2 = DatastoreDecrytGet(filekey.encyption_key, filekey.mac_key, node_data.next_node)
+        node_data_json, err2 = DatastoreDecrytGet(filekey.Encyption_key, filekey.Mac_key, node_data.Next_node)
 
         if err2 != nil {
             return nil, nil, errors.New(strings.ToTitle("Json file corrupted !!!"))
@@ -396,32 +401,34 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
         return nil, errors.New(strings.ToTitle("User exist already !!!"))
     }
 
-    var userdata User
     signed_key, _ := userlib.GenerateRSAKey()
     datastore_key, encyption_key := generate_user_key(username, password)
     userlib.KeystoreSet(username, signed_key.PublicKey)
-
-
-    userdata.Username = username
-    userdata.dataStoreKey = datastore_key
-    userdata.signedKey = signed_key
-    userdata.encryptionKey = encyption_key
-    userdata.macKey = generate_mac_key(username, password)
-    userdata.fileListId = uuid.New().String()
+    mac_key := generate_mac_key(username, password)
+    fileListId := uuid.New().String()
     file_list := make(map[string]FileKey)
+    file_list["try"] = FileKey{}
     file_list_json , _ := json.Marshal(file_list)
-    DatastoreEncryptSet(userdata.encryptionKey, userdata.macKey, file_list_json, userdata.fileListId)
+    userlib.DebugMsg("fileList %v", file_list)
 
+
+    userdata := User{
+        Username      : username,
+        DataStoreKey  : datastore_key,
+        EncryptionKey : encyption_key,
+        MacKey        : mac_key,
+        SignedKey     : signed_key,
+        FileListId    : fileListId,
+    }
+    DatastoreEncryptSet(userdata.EncryptionKey, userdata.MacKey, file_list_json, userdata.FileListId)
 
     user_json, _ := json.Marshal(userdata)
     encypted_user_data := encrypt_data(encyption_key, user_json)
-
     signed_encypted_user_data, _ := userlib.RSASign(signed_key, encypted_user_data)
     encypted_user_data_and_signature := [2][]byte{encypted_user_data, signed_encypted_user_data}
     encypted_user_data_and_signature_json, _ := json.Marshal(encypted_user_data_and_signature)
     userlib.DatastoreSet(string(datastore_key), encypted_user_data_and_signature_json)
 
-    
     return &userdata, err
 }
 
@@ -435,10 +442,9 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
         return nil, errors.New(strings.ToTitle("Not Found User !!!"))
     }
 
-    var userdata User
     datastore_key, encyption_key := generate_user_key(username, password)
     user_data_json, key_exist := userlib.DatastoreGet(string(datastore_key))
-    if !key_exist {
+    if  !key_exist {
         return nil, errors.New(strings.ToTitle("Wrong user information !!!"))
     }
 
@@ -458,11 +464,15 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
     }
 
     user_json := decrypt_data(encyption_key, encypted_user_data)
+
+    var userdata User
     err = json.Unmarshal(user_json, &userdata) 
     if err != nil {
         return nil, errors.New(strings.ToTitle("Json of user data corrupted !!!"))
     }
-    return &userdata, err
+ 
+    return &userdata, nil
+
 
 }
 
@@ -471,25 +481,29 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 
     var file_key FileKey
-    file_key.encyption_key = generate_encryption_key_for_file(filename, uuid.New().String())
-    file_key.mac_key = generate_hmac_key_for_file(filename, uuid.New().String())
-    file_key.file_begin = uuid.New().String()
+    file_key.Encyption_key = generate_encryption_key_for_file(filename, uuid.New().String())
+    file_key.Mac_key = generate_hmac_key_for_file(filename, uuid.New().String())
+    file_key.File_begin = uuid.New().String()
 
     var file_info FileBeginNode
-    file_info.file_length = len(data)
-    num_of_nodes, start_node := SplitAndStoreFile(data, userlib.AESKeySize * 5, file_key.encyption_key, file_key.mac_key)
-    file_info.node_nums  = num_of_nodes
-    file_info.start_node = start_node
+    file_info.File_length = len(data)
+    num_of_nodes, start_node := SplitAndStoreFile(data, userlib.AESKeySize * 5, file_key.Encyption_key, file_key.Mac_key)
+    file_info.Node_nums  = num_of_nodes
+    file_info.Start_node = start_node
 
     file_info_json, _ := json.Marshal(file_info)
-    DatastoreEncryptSet(file_key.encyption_key, file_key.mac_key, file_info_json, file_key.file_begin)
+    DatastoreEncryptSet(file_key.Encyption_key, file_key.Mac_key, file_info_json, file_key.File_begin)
+    filelist, _ := GetFileList(userdata.EncryptionKey, userdata.MacKey, userdata.FileListId)
 
-    filelist, _ := GetFileList(userdata.encryptionKey, userdata.macKey, userdata.fileListId)
+    userlib.DebugMsg("fileList %v", filelist)
+    userlib.DebugMsg("filename %v", filename)
+
     filelist[filename] = file_key
+
+    userlib.DebugMsg("I am fine !!!")
     var file_list_json []byte
     file_list_json , _ = json.Marshal(filelist)
-    //userlib.debugMsg("filelist %s", file_list_json)
-    DatastoreEncryptSet(userdata.encryptionKey, userdata.macKey, file_list_json, userdata.fileListId)
+    DatastoreEncryptSet(userdata.EncryptionKey, userdata.MacKey, file_list_json, userdata.FileListId)
     return
 }
 
@@ -501,7 +515,7 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 
 func (userdata *User) AppendFile(filename string, data []byte) (err error) {
 
-    file_list, err := GetFileList(userdata.encryptionKey, userdata.macKey, userdata.fileListId)
+    file_list, err := GetFileList(userdata.EncryptionKey, userdata.MacKey, userdata.FileListId)
 
     if err != nil {
         return  err
@@ -520,16 +534,16 @@ func (userdata *User) AppendFile(filename string, data []byte) (err error) {
     var last_node_index int
     last_node_index = len(files) - 1
     last_node = files[last_node_index]
-    content = last_node.content
+    content = last_node.Content
     content = append(content, data...)
 
-    num_of_nodes, last_node_id := SplitAndStoreFile(content, userlib.AESKeySize * 5, userdata.encryptionKey, userdata.macKey)
-    file_begin.file_length = len(files)
-    file_begin.node_nums += (num_of_nodes - 1)
-    last_node.next_node = last_node_id
+    num_of_nodes, last_node_id := SplitAndStoreFile(content, userlib.AESKeySize * 5, userdata.EncryptionKey, userdata.MacKey)
+    file_begin.File_length = len(files)
+    file_begin.Node_nums += (num_of_nodes - 1)
+    last_node.Next_node = last_node_id
 
     file_begin_node_json, _ := json.Marshal(file_begin)
-    DatastoreEncryptSet(file_key.encyption_key, file_key.mac_key, file_begin_node_json, file_key.file_begin)
+    DatastoreEncryptSet(file_key.Encyption_key, file_key.Mac_key, file_begin_node_json, file_key.File_begin)
 
     return err
 }
@@ -539,7 +553,7 @@ func (userdata *User) AppendFile(filename string, data []byte) (err error) {
 // It should give an error if the file is corrupted in any way.
 func (userdata *User) LoadFile(filename string) (data []byte, err error) {
 
-    file_list, err := GetFileList(userdata.encryptionKey, userdata.macKey, userdata.fileListId)
+    file_list, err := GetFileList(userdata.EncryptionKey, userdata.MacKey, userdata.FileListId)
 
     if err != nil {
         return nil, err
@@ -560,7 +574,7 @@ func (userdata *User) LoadFile(filename string) (data []byte, err error) {
     }
 
     for i:=0; i < len(files); i++ {
-        data = append(data, files[i].content...)
+        data = append(data, files[i].Content...)
     }
 
     return data, err
@@ -571,7 +585,7 @@ func (userdata *User) LoadFile(filename string) (data []byte, err error) {
 type sharingRecord struct {
 
     Signature      []byte
-    encrypted_file []byte
+    Encrypted_file []byte
 }
 
 // This creates a sharing record, which is a key pointing to something
@@ -594,7 +608,7 @@ func (userdata *User) ShareFile(filename string, recipient string) (
         return "", errors.New(strings.ToTitle("This recipient does not exist"))
     }
 
-    file_list, err := GetFileList(userdata.encryptionKey, userdata.macKey, userdata.fileListId)
+    file_list, err := GetFileList(userdata.EncryptionKey, userdata.MacKey, userdata.FileListId)
 
     if err != nil {
         return "", err
@@ -610,17 +624,17 @@ func (userdata *User) ShareFile(filename string, recipient string) (
     var a_file_key FileKey
     var file_key_recipient *FileKey 
     file_key_recipient = &a_file_key
-    file_key_recipient.encyption_key = file_key.encyption_key
-    file_key_recipient.mac_key = file_key.mac_key
-    file_key_recipient.file_begin = file_key.file_begin
-    file_key_recipient.is_owner = false
+    file_key_recipient.Encyption_key = file_key.Encyption_key
+    file_key_recipient.Mac_key = file_key.Mac_key
+    file_key_recipient.File_begin = file_key.File_begin
+    file_key_recipient.Is_owner = false
     file_key_recipient_json, _ := json.Marshal(file_key_recipient)
     recipient_sharing_id := uuid.New().String()
     file_key_recipient_json_encrypted, err := userlib.RSAEncrypt(&public_key_recipient,
                             file_key_recipient_json, []byte(userdata.Username))
 
-    signature, err := userlib.RSASign(userdata.signedKey, file_key_recipient_json_encrypted)
-    shared_record := sharingRecord{Signature:signature, encrypted_file:file_key_recipient_json_encrypted}
+    signature, err := userlib.RSASign(userdata.SignedKey, file_key_recipient_json_encrypted)
+    shared_record := sharingRecord{Signature:signature, Encrypted_file:file_key_recipient_json_encrypted}
     shared_record_json, _ := json.Marshal(shared_record)
     userlib.DatastoreSet(recipient_sharing_id, shared_record_json)
 
@@ -653,15 +667,15 @@ func (userdata *User) ReceiveFile(filename string, sender string,
         return errors.New(strings.ToTitle("Json file is tampered !!!"))
     }
 
-    err = userlib.RSAVerify(&sender_public_key, sharingRecord.encrypted_file,
+    err = userlib.RSAVerify(&sender_public_key, sharingRecord.Encrypted_file,
         sharingRecord.Signature)
 
     if err != nil {
         return errors.New(strings.ToTitle("RSA Verify fails!!!"))
     }
 
-    file_key_recipient_json, err := userlib.RSADecrypt(userdata.signedKey, 
-                                    sharingRecord.encrypted_file, []byte(sender))
+    file_key_recipient_json, err := userlib.RSADecrypt(userdata.SignedKey, 
+                                    sharingRecord.Encrypted_file, []byte(sender))
     var file_key_recipient FileKey
 
     err = json.Unmarshal(file_key_recipient_json, &file_key_recipient)
@@ -671,7 +685,7 @@ func (userdata *User) ReceiveFile(filename string, sender string,
     } 
 
 
-    file_list_of_receiver, err := GetFileList(userdata.encryptionKey, userdata.macKey, userdata.fileListId)
+    file_list_of_receiver, err := GetFileList(userdata.EncryptionKey, userdata.MacKey, userdata.FileListId)
 
     if err != nil {
         return err
@@ -680,7 +694,7 @@ func (userdata *User) ReceiveFile(filename string, sender string,
     file_list_of_receiver[filename] = file_key_recipient
     file_list_of_receiver_json , _ := json.Marshal(file_list_of_receiver)
 
-    DatastoreEncryptSet(userdata.encryptionKey, userdata.macKey, file_list_of_receiver_json, userdata.fileListId)
+    DatastoreEncryptSet(userdata.EncryptionKey, userdata.MacKey, file_list_of_receiver_json, userdata.FileListId)
 
     return err
 }
