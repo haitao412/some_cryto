@@ -10,10 +10,10 @@ import "reflect"
 
 func TestInit(t *testing.T) {
 	t.Log("Initialization test")
-	userlib.DebugPrint = true
+	userlib.DebugPrint = false
 	someUsefulThings()
 
-	userlib.DebugPrint = false
+	userlib.DebugPrint = true
 	u, err := InitUser("alice", "fubar")
 	if err != nil {
 		// t.Error says the test fails

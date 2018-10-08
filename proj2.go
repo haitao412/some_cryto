@@ -191,17 +191,26 @@ func decrypt_data(key []byte, data []byte) ([]byte){
 
     block := userlib.CFBDecrypter(key, data[:userlib.BlockSize])
     block.XORKeyStream(data[userlib.BlockSize:], data[userlib.BlockSize:])
-
     result := make([]byte, len(data[userlib.AESKeySize:]))
     copy(result, data[userlib.AESKeySize:])
     return result
 }
 
 
+func generate_random_AES_key() ([]byte){
+
+    return  userlib.RandomBytes(userlib.AESKeySize)
+}
+
+
 func DatastoreDecrytGet(encyption_key []byte, mac_key []byte, id string) ([]byte, error){
     var ciphertext []byte
     var valid bool
+
     ciphertext, valid = userlib.DatastoreGet(id)
+
+    
+
     if !valid {
         return nil, errors.New(strings.ToTitle("Can not get from Datastore !!!"))
     }
@@ -218,7 +227,7 @@ func DatastoreDecrytGet(encyption_key []byte, mac_key []byte, id string) ([]byte
 func GetFileList(encyption_key []byte, mac_key []byte, id string) (filelist map[string]FileKey, err error) {
 
     json_file_list, err1 := DatastoreDecrytGet(encyption_key, mac_key, id)
-    userlib.DebugMsg("file_list_json %v", json_file_list)
+    //userlib.DebugMsg("file_list_json %v", json_file_list)
 
     if err1 != nil {
         return nil, err1
@@ -241,19 +250,28 @@ encrypted and maced by 2 keys
 func encypt_and_mac(encyption_key []byte, mac_key []byte, data []byte) ([]byte){
     var mac []byte
     ciphertext := encrypt_data(encyption_key, data)
-    mac = generate_hmac(mac_key, data)
+    //userlib.DebugMsg("encrypted_json %v", ciphertext)
+
+    mac = generate_hmac(mac_key, ciphertext)
     aes_ciphertext := append(ciphertext, mac...)
+    //userlib.DebugMsg("encrypted_json_anc_mac %v", aes_ciphertext)
     return aes_ciphertext
 }
 
 func DatastoreEncryptSet(encyption_key []byte, mac_key []byte, json []byte, id string) {
 
     ciphertext := encypt_and_mac(encyption_key, mac_key, json)
+
+    // userlib.DebugMsg("id %v", id)
+    // userlib.DebugMsg("encruyted file list %v", ciphertext)
+
     userlib.DatastoreSet(id, ciphertext)
 }
 func decrypt_and_demac(encyption_key []byte, mac_key []byte, ciphertext []byte) ([]byte, error) {
 
     encypted_data := ciphertext[:len(ciphertext) - userlib.HashSize]
+    //userlib.DebugMsg("encrypted_json %v", encypted_data)
+    //userlib.DebugMsg("encrypted_json_anc_mac %v", ciphertext)
     hmac := ciphertext[len(ciphertext) - userlib.HashSize:]
 
     computed_mac := generate_hmac(mac_key, encypted_data)
@@ -262,7 +280,8 @@ func decrypt_and_demac(encyption_key []byte, mac_key []byte, ciphertext []byte) 
 
         return nil, errors.New(strings.ToTitle("Cipthertext is temperd !!!"))
     }
-   
+
+    
     return decrypt_data(encyption_key, encypted_data), nil
 }
 
@@ -407,10 +426,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
     mac_key := generate_mac_key(username, password)
     fileListId := uuid.New().String()
     file_list := make(map[string]FileKey)
-    file_list["try"] = FileKey{}
     file_list_json , _ := json.Marshal(file_list)
-    userlib.DebugMsg("fileList %v", file_list)
-
 
     userdata := User{
         Username      : username,
@@ -481,9 +497,10 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 
     var file_key FileKey
-    file_key.Encyption_key = generate_encryption_key_for_file(filename, uuid.New().String())
-    file_key.Mac_key = generate_hmac_key_for_file(filename, uuid.New().String())
+    file_key.Encyption_key = generate_random_AES_key()
+    file_key.Mac_key = generate_random_AES_key()
     file_key.File_begin = uuid.New().String()
+    file_key.Is_owner = true
 
     var file_info FileBeginNode
     file_info.File_length = len(data)
@@ -493,18 +510,20 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 
     file_info_json, _ := json.Marshal(file_info)
     DatastoreEncryptSet(file_key.Encyption_key, file_key.Mac_key, file_info_json, file_key.File_begin)
-    filelist, _ := GetFileList(userdata.EncryptionKey, userdata.MacKey, userdata.FileListId)
+    filelist, err := GetFileList(userdata.EncryptionKey, userdata.MacKey, userdata.FileListId)
 
-    userlib.DebugMsg("fileList %v", filelist)
-    userlib.DebugMsg("filename %v", filename)
+    if err != nil {
+        return errors.New(strings.ToTitle("file is temperd !!!"))
+    }
 
     filelist[filename] = file_key
 
-    userlib.DebugMsg("I am fine !!!")
+    //userlib.DebugMsg("I am fine !!!")
     var file_list_json []byte
     file_list_json , _ = json.Marshal(filelist)
     DatastoreEncryptSet(userdata.EncryptionKey, userdata.MacKey, file_list_json, userdata.FileListId)
-    return
+
+    return nil
 }
 
 // This adds on to an existing file.
@@ -681,7 +700,7 @@ func (userdata *User) ReceiveFile(filename string, sender string,
     err = json.Unmarshal(file_key_recipient_json, &file_key_recipient)
 
     if err != nil {
-        errors.New(strings.ToTitle("Integrity Error!"))
+        return errors.New(strings.ToTitle("Integrity Error!"))
     } 
 
 
@@ -703,5 +722,52 @@ func (userdata *User) ReceiveFile(filename string, sender string,
 func (userdata *User) RevokeFile(filename string) (err error) {
 
 
-    return
+    file_list, err1 := GetFileList(userdata.EncryptionKey, userdata.MacKey, userdata.FileListId)
+
+    if err1 != nil {
+        return errors.New(strings.ToTitle("Can not get FileList!"))
+    }
+
+    file_key, exist := file_list[filename]
+
+    if !exist {
+        return errors.New(strings.ToTitle("Revoke unexist file!"))
+    }
+
+
+    if file_key.Is_owner {
+
+        file_begin, array_of_file_node, _ := get_file_node(&file_key)
+
+        file_key.Encyption_key = generate_random_AES_key()
+        file_key.Mac_key = generate_random_AES_key()
+
+        // Re Encrypt the file
+
+        for i := 0; i < len(array_of_file_node); i++ {
+
+            file_node_json, _ := json.Marshal(array_of_file_node[i])
+            cipthertext_file_node_json := encypt_and_mac(file_key.Encyption_key, file_key.Mac_key, file_node_json)
+
+            if i == 0 {
+                userlib.DatastoreSet(file_begin.Start_node, cipthertext_file_node_json)
+            } else {
+                userlib.DatastoreSet(array_of_file_node[i-1].Next_node, cipthertext_file_node_json)
+            }
+
+
+        }
+
+        file_begin_json, _ := json.Marshal(file_begin)
+        DatastoreEncryptSet(file_key.Encyption_key, file_key.Mac_key, file_begin_json, file_key.File_begin)
+
+        file_list_json, _ := json.Marshal(file_list)
+        DatastoreEncryptSet(userdata.EncryptionKey, userdata.MacKey, file_list_json, userdata.FileListId)
+
+    } else {
+        return errors.New(strings.ToTitle("Not Owner of this file !!!"))
+    }
+
+
+    return nil
 }
