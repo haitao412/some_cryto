@@ -3,16 +3,30 @@ package proj2
 import "github.com/nweaver/cs161-p2/userlib"
 import "testing"
 import "reflect"
-
+import "github.com/google/uuid"
+import "math/rand"
 // You can actually import other stuff if you want IN YOUR TEST
 // HARNESS ONLY.  Note that this is NOT considered part of your
 // solution, but is how you make sure your solution is correct.
-
+const letters = "qwertyuiopasdfghjklzxcvbnm"
+const size = 20;
+func NameGenerater() (userMap map[string]string, err error) {
+    iter := 1
+    for iter <= size {
+        temp := make([]byte, size)
+        for i := range temp {
+            temp[i] = letters[rand.Intn(len(letters))]
+        }
+        name := string(temp)
+        password := uuid.New().String()
+        userMap[name] = password
+    }
+    return userMap, err
+}
 func TestInit(t *testing.T) {
 	t.Log("Initialization test")
 	userlib.DebugPrint = false
 	someUsefulThings()
-
 	userlib.DebugPrint = true
 	u, err := InitUser("alice", "fubar")
 	if err != nil {
@@ -22,6 +36,19 @@ func TestInit(t *testing.T) {
 	// t.Log() only produces output if you run with "go test -v"
 	t.Log("Got user", u)
 	// You probably want many more tests here.
+    var userMap map[string]string
+    userMap,_ = NameGenerater()
+    for key, value := range userMap {
+        //u, err = InitUser(key, value)
+        //if err != nil {
+            // t.Error says the test fails
+        //    t.Error("Failed to self initialize user", err)
+        //}
+         //t.Log() only produces output if you run with "go test -v"
+        t.Log("Got self user", key)
+        t.Log("Got self userpassword", value)
+    }
+
 }
 
 func TestStorage(t *testing.T) {
