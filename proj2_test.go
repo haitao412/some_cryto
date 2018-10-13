@@ -9,19 +9,22 @@ import "math/rand"
 // HARNESS ONLY.  Note that this is NOT considered part of your
 // solution, but is how you make sure your solution is correct.
 const letters = "qwertyuiopasdfghjklzxcvbnm"
-const size = 20;
-func NameGenerater() (userMap map[string]string, err error) {
+const size = 5;
+func NameGenerater() (userMaptr *map[string]string, err error) {
+    var userMap map[string]string
+    userMap = make(map[string]string)
     iter := 1
     for iter <= size {
-        temp := make([]byte, size)
+        temp := make([]byte, rand.Intn(size) + 2)
         for i := range temp {
             temp[i] = letters[rand.Intn(len(letters))]
         }
         name := string(temp)
         password := uuid.New().String()
         userMap[name] = password
+        iter = iter + 1
     }
-    return userMap, err
+    return &userMap, err
 }
 func TestInit(t *testing.T) {
 	t.Log("Initialization test")
@@ -36,19 +39,52 @@ func TestInit(t *testing.T) {
 	// t.Log() only produces output if you run with "go test -v"
 	t.Log("Got user", u)
 	// You probably want many more tests here.
-    var userMap map[string]string
-    userMap,_ = NameGenerater()
+    var userMaptr *map[string]string
+    userMaptr,_ = NameGenerater()
+    userMap := *userMaptr
+    t.Log("Self Init users with total number of", size)
     for key, value := range userMap {
-        //u, err = InitUser(key, value)
-        //if err != nil {
-            // t.Error says the test fails
-        //    t.Error("Failed to self initialize user", err)
-        //}
-         //t.Log() only produces output if you run with "go test -v"
-        t.Log("Got self user", key)
-        t.Log("Got self userpassword", value)
+        u, err = InitUser(key, value)
+        if err != nil {
+            //t.Error says the test fails
+            t.Error("Failed to self initialize user", err)
+        }
+        //t.Log() only produces output if you run with "go test -v"
+        t.Log("Init user", u)
+        t.Log("Init userpassword", value)
     }
-
+    t.Log("Self get users with total number of", size)
+    for key, value := range userMap {
+        u, err = GetUser(key, value)
+        if err != nil {
+            //t.Error says the test fails
+            t.Error("Failed to get user", err)
+        }
+        //t.Log() only produces output if you run with "go test -v"
+        t.Log("Get user", u)
+    }
+    t.Log("Self test get users with Wrong password")
+    for key, _ := range userMap {
+        u, err = GetUser(key, "0000")
+        if err != nil {
+            //t.Error says the test fails
+            t.Log("Correct get Wrong password:", err)
+        }
+        //t.Log() only produces output if you run with "go test -v"
+        //t.Log("Got self user", u)
+        //t.Log("Got self userpassword", value)
+    }
+    t.Log("Self test get users with Wrong Username")
+    for _, value := range userMap {
+        u, err = GetUser("aaaa", value)
+        if err != nil {
+            //t.Error says the test fails
+            t.Log("Correct get Wrong Username:", err)
+        }
+        //t.Log() only produces output if you run with "go test -v"
+        //t.Log("Got self user", u)
+        //t.Log("Got self userpassword", value)
+    }
 }
 
 func TestStorage(t *testing.T) {
