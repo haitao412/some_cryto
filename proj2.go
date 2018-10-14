@@ -151,7 +151,7 @@ a key to encrypt userdate
 */
 func generate_user_key(username string, password string) ([]byte, []byte) {
     encyption_key := userlib.Argon2Key([]byte(password), []byte(username), uint32(userlib.BlockSize))
-    datastore_key := userlib.Argon2Key([]byte(username), []byte(password), uint32(len(username)))
+    datastore_key := userlib.Argon2Key([]byte(encyption_key), []byte(username), uint32(len(username)))
     
     return datastore_key, encyption_key
 }
@@ -304,39 +304,38 @@ func generate_hmac_key_for_file(file_name string, random_string string) ([]byte)
 }
 
 
-func SplitAndStoreFile(data []byte, node_size int, encryption_key []byte, mac_key []byte) (num_of_node int,node_id string) {
+func SplitAndStoreFile(data []byte, node_size int, encryption_key []byte, mac_key []byte, stored_id string) (num_of_node int,node_id string) {
 
     new_data := make([]byte, len(data))
     copy(new_data, data)
     length := len(data)
-    node_id = uuid.New().String()
+    if stored_id == "" {
+        node_id = uuid.New().String()
+    } else {
+        node_id = stored_id
+    }
     num_of_node = 0
     var thisNode FileNode
+
+    //userlib.DebugMsg("data: %v",string(data))
 
     if length < node_size {
 
         num_of_node = 1
         thisNode.Content = new_data
-        thisNode.Next_node = uuid.New().String()
+        thisNode.Next_node = ""
 
-        var terminal_node FileNode
-        terminal_node.Content = nil
-
-        terminal_node_json, _ := json.Marshal(terminal_node)
-        DatastoreEncryptSet(encryption_key, mac_key, terminal_node_json, thisNode.Next_node)
-
+        
         thisNode_json, _ := json.Marshal(thisNode)
         DatastoreEncryptSet(encryption_key, mac_key, thisNode_json, node_id)
 
     } else {
-        var thisNode_json []byte
+        //var thisNode_json []byte
         thisNode.Content = new_data[:node_size]
-        num_of_node, thisNode.Next_node = SplitAndStoreFile(new_data[node_size:], node_size, encryption_key, mac_key)
-        thisNode_json, _ = json.Marshal(thisNode)
+        num_of_node, thisNode.Next_node = SplitAndStoreFile(new_data[node_size:], node_size, encryption_key, mac_key, "")
+        thisNode_json, _ := json.Marshal(thisNode)
         DatastoreEncryptSet(encryption_key, mac_key, thisNode_json, node_id)
         num_of_node = num_of_node + 1
-
-        
     }
 
     return num_of_node, node_id
@@ -348,20 +347,24 @@ func get_file_node(filekey *FileKey) (file_begin *FileBeginNode, data []*FileNod
     file_begin_node_json, err := DatastoreDecrytGet(filekey.Encyption_key, filekey.Mac_key, filekey.File_begin)
 
     if err != nil {
+        userlib.DebugMsg("decrypt error 1")
         return nil, nil, errors.New(strings.ToTitle("file not found !!!"))
     }
+
 
     err1 := json.Unmarshal(file_begin_node_json, &file_begin)
 
     if err1 != nil {
-
+        userlib.DebugMsg("json error file begin")
         return nil, nil, errors.New(strings.ToTitle("Json file corrupted !!!"))
     }
 
+    //userlib.DebugMsg("get_file_node here: %v", file_begin.Node_nums)
     data = make([]*FileNode, file_begin.Node_nums)
     node_data_json, err2 := DatastoreDecrytGet(filekey.Encyption_key, filekey.Mac_key, file_begin.Start_node)
 
     if err2 != nil {
+        userlib.DebugMsg("decrypt error 2")
         return nil, nil, errors.New(strings.ToTitle("file not found !!!"))
     }
 
@@ -371,17 +374,19 @@ func get_file_node(filekey *FileKey) (file_begin *FileBeginNode, data []*FileNod
         err3 := json.Unmarshal(node_data_json, &node_data)
 
         if err3 != nil {
+            userlib.DebugMsg("json errornode_data_json start")
             return nil, nil, errors.New(strings.ToTitle("Json file corrupted !!!"))
         }
 
-        if node_data.Content == nil {
+        data[i] = &node_data
+        if node_data.Next_node == ""{
             break
         }
-        data[i] = &node_data
-
+        
         node_data_json, err2 = DatastoreDecrytGet(filekey.Encyption_key, filekey.Mac_key, node_data.Next_node)
 
         if err2 != nil {
+            userlib.DebugMsg("json error errornode_data_json inner")
             return nil, nil, errors.New(strings.ToTitle("Json file corrupted !!!"))
         }
 
@@ -504,7 +509,8 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 
     var file_info FileBeginNode
     file_info.File_length = len(data)
-    num_of_nodes, start_node := SplitAndStoreFile(data, userlib.AESKeySize * 5, file_key.Encyption_key, file_key.Mac_key)
+    // userlib.DebugMsg("Inside StoreFile")
+    num_of_nodes, start_node := SplitAndStoreFile(data, userlib.AESKeySize * 5, file_key.Encyption_key, file_key.Mac_key, "")
     file_info.Node_nums  = num_of_nodes
     file_info.Start_node = start_node
 
@@ -518,7 +524,7 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 
     filelist[filename] = file_key
 
-    //userlib.DebugMsg("I am fine !!!")
+    
     var file_list_json []byte
     file_list_json , _ = json.Marshal(filelist)
     DatastoreEncryptSet(userdata.EncryptionKey, userdata.MacKey, file_list_json, userdata.FileListId)
@@ -547,21 +553,40 @@ func (userdata *User) AppendFile(filename string, data []byte) (err error) {
     if !exist {
         return  errors.New(strings.ToTitle("This file does not exist"))
     }
-    var content []byte
+    
     file_begin, files ,err := get_file_node(&file_key)
     var last_node *FileNode
     var last_node_index int
     last_node_index = len(files) - 1
     last_node = files[last_node_index]
-    content = last_node.Content
+    content := last_node.Content
     content = append(content, data...)
 
-    num_of_nodes, last_node_id := SplitAndStoreFile(content, userlib.AESKeySize * 5, userdata.EncryptionKey, userdata.MacKey)
-    file_begin.File_length = len(files)
-    file_begin.Node_nums += (num_of_nodes - 1)
-    last_node.Next_node = last_node_id
+    
 
-    file_begin_node_json, _ := json.Marshal(file_begin)
+    var last_id string
+
+    if file_begin.Node_nums == 1 {
+        last_id = file_begin.Start_node
+    } else {
+        last_id = files[last_node_index - 1].Next_node
+    }
+
+    num_of_nodes, _ := SplitAndStoreFile(content, userlib.AESKeySize * 5, file_key.Encyption_key, file_key.Mac_key, last_id)
+
+    // one node
+
+    file_begin.File_length += len(data)
+    file_begin.Node_nums += (num_of_nodes - 1)
+
+    var file_info_for_storing_purpose FileBeginNode
+    file_info_for_storing_purpose.File_length = file_begin.File_length
+    file_info_for_storing_purpose.Node_nums = file_begin.Node_nums
+    file_info_for_storing_purpose.Start_node = file_begin.Start_node
+
+    
+
+    file_begin_node_json, _ := json.Marshal(file_info_for_storing_purpose)
     DatastoreEncryptSet(file_key.Encyption_key, file_key.Mac_key, file_begin_node_json, file_key.File_begin)
 
     return err
@@ -575,6 +600,7 @@ func (userdata *User) LoadFile(filename string) (data []byte, err error) {
     file_list, err := GetFileList(userdata.EncryptionKey, userdata.MacKey, userdata.FileListId)
 
     if err != nil {
+        userlib.DebugMsg("get file list")
         return nil, err
     }
 
@@ -583,20 +609,24 @@ func (userdata *User) LoadFile(filename string) (data []byte, err error) {
     file_key, exist = file_list[filename]
 
     if !exist {
+        userlib.DebugMsg("Not exist")
         return nil, errors.New(strings.ToTitle("This file does not exist"))
     }
 
     _, files ,err := get_file_node(&file_key)
 
+    //userlib.DebugMsg("Load here: %v", len(files))
     if err != nil {
+        userlib.DebugMsg("file keys")
         return nil, err
     }
 
     for i:=0; i < len(files); i++ {
+        
         data = append(data, files[i].Content...)
     }
 
-    return data, err
+    return data, nil
 }
 
 // You may want to define what you actually want to pass as a
